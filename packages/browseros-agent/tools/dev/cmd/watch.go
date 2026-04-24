@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"sync"
@@ -40,6 +41,9 @@ func runWatch(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	if err := ensureDevCachePresent(); err != nil {
+		return err
+	}
+	if err := ensureLimactlPresent(); err != nil {
 		return err
 	}
 
@@ -191,7 +195,20 @@ func ensureDevCachePresent() error {
 	}
 	manifestPath := filepath.Join(home, ".browseros-dev", "cache", "vm", "manifest.json")
 	if _, err := os.Stat(manifestPath); os.IsNotExist(err) {
-		return fmt.Errorf("VM cache missing at %s; run bun run dev:setup once", manifestPath)
+		return fmt.Errorf("%s %s",
+			proc.ErrorColor.Sprint("VM cache is missing."),
+			proc.DimColor.Sprintf("Run %s once.", proc.BoldColor.Sprint("bun run dev:setup")),
+		)
+	}
+	return nil
+}
+
+func ensureLimactlPresent() error {
+	if _, err := exec.LookPath("limactl"); err != nil {
+		return fmt.Errorf("%s %s",
+			proc.ErrorColor.Sprint("Lima is not installed."),
+			proc.DimColor.Sprintf("Install with %s.", proc.BoldColor.Sprint("brew install lima")),
+		)
 	}
 	return nil
 }

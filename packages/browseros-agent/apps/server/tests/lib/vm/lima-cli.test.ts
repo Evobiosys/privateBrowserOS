@@ -15,8 +15,10 @@ import {
 import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
+import { logger } from '../../../src/lib/logger'
 import { LimaCommandError, VmNotReadyError } from '../../../src/lib/vm/errors'
 import { LimaCli } from '../../../src/lib/vm/lima-cli'
+import { VM_TELEMETRY_EVENTS } from '../../../src/lib/vm/telemetry'
 import { fakeLimactl } from '../../__helpers__/fake-limactl'
 import { fakeSsh } from '../../__helpers__/fake-ssh'
 
@@ -102,6 +104,23 @@ describe('LimaCli', () => {
     expect(error).toBeInstanceOf(LimaCommandError)
     expect(error.exitCode).toBe(2)
     expect(error.stderr).toBe('cannot start')
+  })
+
+  it('does not log limactl stderr chunks by default', async () => {
+    const debug = spyOn(logger, 'debug').mockImplementation(() => {})
+    const limactlPath = await fakeLimactl(
+      { start: { stderr: 'boot noise\n' } },
+      logPath,
+    )
+    const cli = new LimaCli({ limactlPath, limaHome })
+
+    await cli.start('browseros-vm')
+
+    expect(
+      debug.mock.calls.some(
+        ([message]) => message === VM_TELEMETRY_EVENTS.limaStderrChunk,
+      ),
+    ).toBe(false)
   })
 
   it('stops and deletes VMs', async () => {

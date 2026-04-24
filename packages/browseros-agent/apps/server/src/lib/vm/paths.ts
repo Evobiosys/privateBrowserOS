@@ -4,14 +4,23 @@
  * SPDX-License-Identifier: AGPL-3.0-or-later
  */
 
-import { existsSync } from 'node:fs'
+import { accessSync, constants, existsSync } from 'node:fs'
 import { homedir, arch as osArch } from 'node:os'
-import { dirname, isAbsolute, join, relative, resolve, sep } from 'node:path'
+import {
+  delimiter,
+  dirname,
+  isAbsolute,
+  join,
+  relative,
+  resolve,
+  sep,
+} from 'node:path'
 import { PATHS } from '@browseros/shared/constants/paths'
 
 export const VM_NAME = 'browseros-vm'
 export const GUEST_VM_STATE = '/mnt/browseros/vm'
 export const GUEST_IMAGE_CACHE = '/mnt/browseros/cache/images'
+const HOST_LIMACTL_BINARY = 'limactl'
 
 export type Arch = 'arm64' | 'x64'
 
@@ -88,7 +97,7 @@ export function decompressedDiskPath(
 }
 
 export function resolveBundledLimactl(resourcesDir: string): string {
-  if (usesHostVmTools()) return 'limactl'
+  if (usesHostVmTools()) return resolveHostLimactl()
 
   const candidate = join(resourcesDir, 'bin', 'third_party', 'lima', 'limactl')
   if (!existsSync(candidate)) {
@@ -97,6 +106,14 @@ export function resolveBundledLimactl(resourcesDir: string): string {
     )
   }
   return candidate
+}
+
+function resolveHostLimactl(): string {
+  const resolved = findExecutableOnPath(HOST_LIMACTL_BINARY)
+  if (resolved) return resolved
+  throw new Error(
+    'Lima is not installed or limactl is not on PATH. Install with brew install lima.',
+  )
 }
 
 export function resolveBundledLimaTemplate(resourcesDir: string): string {
@@ -118,6 +135,20 @@ function usesHostVmTools(): boolean {
   return (
     process.env.NODE_ENV === 'development' || process.env.NODE_ENV === 'test'
   )
+}
+
+function findExecutableOnPath(binary: string): string | null {
+  const pathEnv = process.env.PATH
+  if (!pathEnv) return null
+  for (const dir of pathEnv.split(delimiter)) {
+    if (!dir) continue
+    const candidate = join(dir, binary)
+    try {
+      accessSync(candidate, constants.X_OK)
+      return candidate
+    } catch {}
+  }
+  return null
 }
 
 function findSourceLimaTemplate(resourcesDir: string): string | null {

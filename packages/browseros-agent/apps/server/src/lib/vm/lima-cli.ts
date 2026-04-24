@@ -32,6 +32,8 @@ export interface LimaShellProcess {
   exited: Promise<number>
 }
 
+const LIMA_VERBOSE_LOGGING = false
+
 export class LimaCli {
   constructor(private readonly cfg: LimaCliConfig) {}
 
@@ -159,15 +161,18 @@ export class LimaCli {
       limaHome: this.cfg.limaHome,
     })
 
+    const stderrLogger = LIMA_VERBOSE_LOGGING
+      ? (line: string) => {
+          logger.debug(VM_TELEMETRY_EVENTS.limaStderrChunk, {
+            pid: proc.pid,
+            firstArg: args[0],
+            line,
+          })
+        }
+      : undefined
     const [stdout, stderr, exitCode] = await Promise.all([
       drainToString(proc.stdout),
-      drainToString(proc.stderr, (line) => {
-        logger.debug(VM_TELEMETRY_EVENTS.limaStderrChunk, {
-          pid: proc.pid,
-          firstArg: args[0],
-          line,
-        })
-      }),
+      drainToString(proc.stderr, stderrLogger),
       proc.exited,
     ])
     const durationMs = Date.now() - started

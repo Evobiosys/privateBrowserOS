@@ -4,7 +4,7 @@
  */
 
 import { afterEach, describe, expect, it } from 'bun:test'
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { homedir, tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { PATHS } from '@browseros/shared/constants/paths'
@@ -28,12 +28,18 @@ import {
 
 describe('VM paths', () => {
   const originalNodeEnv = process.env.NODE_ENV
+  const originalPath = process.env.PATH
 
   afterEach(() => {
     if (originalNodeEnv === undefined) {
       delete process.env.NODE_ENV
     } else {
       process.env.NODE_ENV = originalNodeEnv
+    }
+    if (originalPath === undefined) {
+      delete process.env.PATH
+    } else {
+      process.env.PATH = originalPath
     }
   })
 
@@ -129,16 +135,44 @@ describe('VM paths', () => {
     }
   })
 
-  it('uses PATH limactl in development mode', () => {
+  it('uses PATH limactl in development mode', async () => {
     process.env.NODE_ENV = 'development'
+    const binDir = await createFakeLimactlPath()
 
-    expect(resolveBundledLimactl('/tmp/missing-dev-resources')).toBe('limactl')
+    try {
+      expect(resolveBundledLimactl('/tmp/missing-dev-resources')).toBe(
+        join(binDir, 'limactl'),
+      )
+    } finally {
+      await rm(binDir, { recursive: true, force: true })
+    }
   })
 
-  it('uses PATH limactl in test mode', () => {
+  it('uses PATH limactl in test mode', async () => {
     process.env.NODE_ENV = 'test'
+    const binDir = await createFakeLimactlPath()
 
-    expect(resolveBundledLimactl('/tmp/missing-test-resources')).toBe('limactl')
+    try {
+      expect(resolveBundledLimactl('/tmp/missing-test-resources')).toBe(
+        join(binDir, 'limactl'),
+      )
+    } finally {
+      await rm(binDir, { recursive: true, force: true })
+    }
+  })
+
+  it('throws with a brew install hint when host limactl is missing', async () => {
+    process.env.NODE_ENV = 'development'
+    const binDir = await mkdtemp(join(tmpdir(), 'missing-host-limactl-'))
+    process.env.PATH = binDir
+
+    try {
+      expect(() => resolveBundledLimactl('/tmp/missing-dev-resources')).toThrow(
+        'brew install lima',
+      )
+    } finally {
+      await rm(binDir, { recursive: true, force: true })
+    }
   })
 
   it('throws with a build-tools hint when bundled limactl is missing', () => {
@@ -185,3 +219,12 @@ describe('VM paths', () => {
     }
   })
 })
+
+async function createFakeLimactlPath(): Promise<string> {
+  const binDir = await mkdtemp(join(tmpdir(), 'host-limactl-'))
+  const limactlPath = join(binDir, 'limactl')
+  await writeFile(limactlPath, '#!/bin/sh\n')
+  await chmod(limactlPath, 0o755)
+  process.env.PATH = binDir
+  return binDir
+}
