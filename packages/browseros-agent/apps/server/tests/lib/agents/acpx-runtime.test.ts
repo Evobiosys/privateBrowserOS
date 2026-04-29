@@ -478,7 +478,6 @@ open &lt;example.com&gt;
       cwd: '/tmp/browseros-acpx-runtime',
       stateDir: '/tmp/browseros-acpx-state',
       openclawGateway: {
-        getPort: () => 18789,
         getGatewayToken: () => 'test-token-abc',
         getContainerName: () => 'browseros-openclaw-openclaw-gateway-1',
         getLimaHomeDir: () => '/Users/dev/.browseros-dev/lima',
@@ -515,9 +514,11 @@ open &lt;example.com&gt;
     expect(command).toContain('env LIMA_HOME=/Users/dev/.browseros-dev/lima')
     expect(command).toContain('/opt/homebrew/bin/limactl shell browseros-vm --')
     expect(command).toContain(
-      'nerdctl exec -i -e OPENCLAW_HIDE_BANNER=1 -e OPENCLAW_SUPPRESS_NOTES=1 -e OPENCLAW_GATEWAY_TOKEN=test-token-abc browseros-openclaw-openclaw-gateway-1',
+      'nerdctl exec -i -e OPENCLAW_HIDE_BANNER=1 -e OPENCLAW_SUPPRESS_NOTES=1 browseros-openclaw-openclaw-gateway-1',
     )
-    expect(command).toContain('openclaw acp --url ws://127.0.0.1:18789')
+    expect(command).toContain(
+      'openclaw acp --url ws://127.0.0.1:18789 --token test-token-abc',
+    )
     // sessionKey routing: the bridge needs --session <key> to map newSession
     // requests to the matching gateway agent (acpx does not forward
     // sessionKey via ACP newSession params).
@@ -535,7 +536,6 @@ open &lt;example.com&gt;
       cwd: '/tmp/browseros-acpx-runtime',
       stateDir: '/tmp/browseros-acpx-state',
       openclawGateway: {
-        getPort: () => 18789,
         getGatewayToken: () => 'test-token-abc',
         getContainerName: () => 'browseros-openclaw-openclaw-gateway-1',
         getLimaHomeDir: () => '/Users/dev/.browseros-dev/lima',

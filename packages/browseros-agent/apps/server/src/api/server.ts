@@ -138,7 +138,6 @@ export async function createHttpServer(config: HttpServerConfig) {
         browserosServerPort: port,
         browser,
         openclawGateway: {
-          getPort: () => getOpenClawService().getPort(),
           getGatewayToken: () => getOpenClawService().getGatewayToken(),
           getContainerName: () => OPENCLAW_GATEWAY_CONTAINER_NAME,
           getLimaHomeDir: () => getLimaHomeDir(),

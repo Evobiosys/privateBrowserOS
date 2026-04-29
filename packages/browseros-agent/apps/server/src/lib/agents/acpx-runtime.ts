@@ -6,6 +6,7 @@
 
 import { randomUUID } from 'node:crypto'
 import { join } from 'node:path'
+import { OPENCLAW_GATEWAY_CONTAINER_PORT } from '@browseros/shared/constants/openclaw'
 import { DEFAULT_PORTS } from '@browseros/shared/constants/ports'
 import {
   type AcpRuntimeEvent,
@@ -45,13 +46,10 @@ import type {
  * when spawning the openclaw ACP adapter inside the gateway container.
  *
  * Fields are getters (not snapshot values) so the harness picks up the
- * current port/token at spawn time — port can change after a gateway
- * restart, token can rotate.
+ * current token and VM/container paths at spawn time.
  */
 export interface OpenclawGatewayAccessor {
-  /** Host port the gateway is currently bound to (e.g. 18789). */
-  getPort(): number
-  /** Current gateway auth token. Passed via OPENCLAW_GATEWAY_TOKEN env. */
+  /** Current gateway auth token. Passed to `openclaw acp --token`. */
   getGatewayToken(): string
   /** Container name e.g. browseros-openclaw-openclaw-gateway-1. */
   getContainerName(): string
@@ -730,10 +728,8 @@ function createBrowserosAgentRegistry(
  * already installed alongside the gateway is reused; BrowserOS does
  * not require a host-side openclaw install.
  *
- * Auth: the gateway token is injected as the OPENCLAW_GATEWAY_TOKEN
- * env var on the container exec, which the openclaw CLI honors per
- * its documented env-var precedence. This avoids the `--token` flag
- * showing the secret in `ps aux`.
+ * Auth: `openclaw acp --url ...` deliberately does not reuse implicit
+ * env/config credentials, so pass the gateway token explicitly.
  *
  * Banner output: OPENCLAW_HIDE_BANNER and OPENCLAW_SUPPRESS_NOTES
  * suppress non-JSON-RPC chatter on stdout that would otherwise corrupt
@@ -743,12 +739,12 @@ function resolveOpenclawAcpCommand(
   gateway: OpenclawGatewayAccessor,
   sessionKey: string | null,
 ): string {
-  const port = gateway.getPort()
   const token = gateway.getGatewayToken()
   const limactl = gateway.getLimactlPath()
   const vm = gateway.getVmName()
   const container = gateway.getContainerName()
   const limaHome = gateway.getLimaHomeDir()
+  const gatewayUrlInsideContainer = `ws://127.0.0.1:${OPENCLAW_GATEWAY_CONTAINER_PORT}`
 
   // `--session <key>` routes the bridge's newSession requests to the
   // matching gateway agent. acpx does not pass sessionKey through ACP
@@ -785,13 +781,13 @@ function resolveOpenclawAcpCommand(
     'OPENCLAW_HIDE_BANNER=1',
     '-e',
     'OPENCLAW_SUPPRESS_NOTES=1',
-    '-e',
-    `OPENCLAW_GATEWAY_TOKEN=${token}`,
     container,
     'openclaw',
     'acp',
     '--url',
-    `ws://127.0.0.1:${port}`,
+    gatewayUrlInsideContainer,
+    '--token',
+    token,
   ]
   if (bridgeSessionKey) {
     argv.push('--session', bridgeSessionKey)
