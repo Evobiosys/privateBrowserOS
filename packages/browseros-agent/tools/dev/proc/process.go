@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"sort"
+	"strconv"
+	"strings"
 	"syscall"
 	"time"
 )
@@ -120,6 +124,85 @@ func DefaultWatchRunBaseDir() (string, error) {
 	return filepath.Join(home, ".browseros-dev", "runs"), nil
 }
 
+// StopAllWatchProcesses terminates every recorded dev watch run.
+func StopAllWatchProcesses(timeout time.Duration) (int, error) {
+	baseDir, err := DefaultWatchRunBaseDir()
+	if err != nil {
+		return 0, err
+	}
+	return StopAllWatchProcessesInDir(baseDir, timeout)
+}
+
+// StopAllWatchProcessesInDir is StopAllWatchProcesses with an explicit state directory for tests.
+func StopAllWatchProcessesInDir(baseDir string, timeout time.Duration) (int, error) {
+	pgids, err := liveWatchRunPGIDs(baseDir)
+	if err != nil {
+		return 0, err
+	}
+	if len(pgids) == 0 {
+		return 0, nil
+	}
+
+	for _, pgid := range pgids {
+		if err := signalProcessGroup(pgid, syscall.SIGTERM); err != nil {
+			return 0, err
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining := livePGIDs(pgids)
+		if len(remaining) == 0 {
+			return len(pgids), nil
+		}
+		if time.Now().After(deadline) {
+			for _, pgid := range remaining {
+				if err := signalProcessGroup(pgid, syscall.SIGKILL); err != nil {
+					return 0, err
+				}
+			}
+			return len(pgids), nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+// KillBrowserProcessesForDevProfiles kills BrowserOS instances using temporary dev/test profiles.
+func KillBrowserProcessesForDevProfiles(timeout time.Duration) (int, error) {
+	pids, err := currentBrowserProfilePIDs()
+	if err != nil {
+		return 0, err
+	}
+	if len(pids) == 0 {
+		return 0, nil
+	}
+	for _, pid := range pids {
+		if err := signalProcess(pid, syscall.SIGTERM); err != nil {
+			return 0, err
+		}
+	}
+
+	deadline := time.Now().Add(timeout)
+	for {
+		remaining, err := currentBrowserProfilePIDs()
+		if err != nil {
+			return 0, err
+		}
+		if len(remaining) == 0 {
+			return len(pids), nil
+		}
+		if time.Now().After(deadline) {
+			for _, pid := range remaining {
+				if err := signalProcess(pid, syscall.SIGKILL); err != nil {
+					return 0, err
+				}
+			}
+			return len(pids), nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func (l *WatchRunLock) Close() error {
 	if l == nil || l.file == nil {
 		return nil
@@ -168,6 +251,82 @@ func readWatchRunStateWithRetry(path string, timeout time.Duration) (WatchRunSta
 		}
 		time.Sleep(50 * time.Millisecond)
 	}
+}
+
+func liveWatchRunPGIDs(baseDir string) ([]int, error) {
+	statePaths, err := filepath.Glob(filepath.Join(baseDir, "watch-*.json"))
+	if err != nil {
+		return nil, err
+	}
+	seen := map[int]struct{}{}
+	for _, statePath := range statePaths {
+		state, err := ReadWatchRunState(statePath)
+		if err != nil || state.PGID <= 0 || !processGroupLive(state.PGID) {
+			continue
+		}
+		seen[state.PGID] = struct{}{}
+	}
+	pgids := make([]int, 0, len(seen))
+	for pgid := range seen {
+		pgids = append(pgids, pgid)
+	}
+	sort.Ints(pgids)
+	return pgids, nil
+}
+
+func livePGIDs(pgids []int) []int {
+	remaining := make([]int, 0, len(pgids))
+	for _, pgid := range pgids {
+		if processGroupLive(pgid) {
+			remaining = append(remaining, pgid)
+		}
+	}
+	return remaining
+}
+
+func processGroupLive(pgid int) bool {
+	if pgid <= 0 {
+		return false
+	}
+	err := syscall.Kill(-pgid, 0)
+	return err == nil || err == syscall.EPERM
+}
+
+func currentBrowserProfilePIDs() ([]int, error) {
+	output, err := exec.Command("ps", "-axo", "pid=,pgid=,command=").Output()
+	if err != nil {
+		return nil, fmt.Errorf("listing processes: %w", err)
+	}
+	return browserProfilePIDsFromPS(string(output)), nil
+}
+
+func browserProfilePIDsFromPS(output string) []int {
+	var pids []int
+	for _, line := range strings.Split(output, "\n") {
+		fields := strings.Fields(line)
+		if len(fields) < 3 {
+			continue
+		}
+		pid, err := strconv.Atoi(fields[0])
+		if err != nil {
+			continue
+		}
+		command := strings.Join(fields[2:], " ")
+		if isDevBrowserProcess(command) {
+			pids = append(pids, pid)
+		}
+	}
+	sort.Ints(pids)
+	return pids
+}
+
+func isDevBrowserProcess(command string) bool {
+	if !strings.Contains(command, "BrowserOS.app/Contents/MacOS/BrowserOS") {
+		return false
+	}
+	return strings.Contains(command, "--user-data-dir=/tmp/browseros-dev") ||
+		strings.Contains(command, "browseros-dev-") ||
+		strings.Contains(command, "browseros-test-")
 }
 
 func watchRunPaths(baseDir string, identity WatchRunIdentity) watchRunPathsResult {
@@ -276,6 +435,16 @@ func signalProcessGroup(pgid int, signal syscall.Signal) error {
 	}
 	if err := syscall.Kill(-pgid, signal); err != nil && err != syscall.ESRCH {
 		return fmt.Errorf("signaling process group %d: %w", pgid, err)
+	}
+	return nil
+}
+
+func signalProcess(pid int, signal syscall.Signal) error {
+	if pid <= 0 {
+		return fmt.Errorf("invalid process %d", pid)
+	}
+	if err := syscall.Kill(pid, signal); err != nil && err != syscall.ESRCH {
+		return fmt.Errorf("signaling process %d: %w", pid, err)
 	}
 	return nil
 }

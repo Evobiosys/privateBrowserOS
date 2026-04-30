@@ -13,9 +13,11 @@
     "dev:watch:new": "./tools/dev/run.sh watch --new",
     "dev:manual": "./tools/dev/run.sh watch --manual",
     "dev:setup": "./tools/dev/setup.sh",
+    "dev:cleanup": "./tools/dev/run.sh cleanup",
+    "dev:reset": "./tools/dev/run.sh reset",
     "install:browseros-dogfood": "make -C tools/dogfood install",
     "test:env": "./tools/dev/run.sh test",
-    "test:cleanup": "./tools/dev/run.sh cleanup",
+    "test:cleanup": "./tools/dev/run.sh cleanup --quick --yes",
     "start:server": "bun run --filter @browseros/server --elide-lines=0 start",
     "start:agent": "bun run --filter @browseros/agent dev",
     "build": "bun run build:server && bun run build:agent",
@@ -34,8 +36,7 @@
     "lint": "bunx biome check",
     "lint:fix": "bunx biome check --write --unsafe",
     "gen:cdp": "bun scripts/codegen/cdp-protocol.ts",
-    "generate:models": "bun scripts/generate-models.ts",
-    "clean": "rimraf dist"
+    "generate:models": "bun scripts/generate-models.ts"
   },
   "repository": "browseros-ai/BrowserOS-server",
   "author": "BrowserOS",
@@ -56,7 +57,6 @@
     "globals": "^16.4.0",
     "lefthook": "^2.0.12",
     "picocolors": "^1.1.1",
-    "rimraf": "^6.0.1",
     "typedoc": "^0.28.15",
     "typescript": "^5.9.2"
   },

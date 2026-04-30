@@ -42,6 +42,22 @@ func TestWatchRunPathsStableAndDistinct(t *testing.T) {
 	}
 }
 
+func TestBrowserProfilePIDsFromPSSelectsOnlyDevAndTestProfiles(t *testing.T) {
+	output := `
+  111  111 /Applications/BrowserOS.app/Contents/MacOS/BrowserOS --user-data-dir=/tmp/browseros-dev
+  222  222 /Applications/BrowserOS.app/Contents/MacOS/BrowserOS --user-data-dir=/tmp/browseros-dev-abcd
+  333  333 /Applications/BrowserOS.app/Contents/MacOS/BrowserOS --user-data-dir=/var/folders/x/browseros-test-abcd
+  444  444 /Applications/BrowserOS.app/Contents/MacOS/BrowserOS --user-data-dir=/Users/me/Library/Application Support/BrowserOS
+  555  555 rg browseros-test-
+`
+
+	pids := browserProfilePIDsFromPS(output)
+
+	if len(pids) != 3 || pids[0] != 111 || pids[1] != 222 || pids[2] != 333 {
+		t.Fatalf("expected dev/test browser pids, got %#v", pids)
+	}
+}
+
 func TestAcquireWatchRunLockWritesStateAndReleases(t *testing.T) {
 	baseDir := t.TempDir()
 	identity := WatchRunIdentity{
