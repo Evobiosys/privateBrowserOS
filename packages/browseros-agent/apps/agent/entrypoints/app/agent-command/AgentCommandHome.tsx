@@ -1,18 +1,25 @@
 import { Plus } from 'lucide-react'
-import { type FC, useEffect, useState } from 'react'
+import { type FC, useEffect, useMemo, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Separator } from '@/components/ui/separator'
+import type {
+  HarnessAdapterDescriptor,
+  HarnessAgent,
+} from '@/entrypoints/app/agents/agent-harness-types'
+import {
+  useAgentAdapters,
+  useHarnessAgents,
+} from '@/entrypoints/app/agents/useAgents'
 import type { AgentEntry } from '@/entrypoints/app/agents/useOpenClaw'
 import { ImportDataHint } from '@/entrypoints/newtab/index/ImportDataHint'
 import { SignInHint } from '@/entrypoints/newtab/index/SignInHint'
 import { useActiveHint } from '@/entrypoints/newtab/index/useActiveHint'
-import type { AgentCardData } from '@/lib/agent-conversations/types'
 import { AgentCardDock } from './AgentCardDock'
 import { useAgentCommandData } from './agent-command-layout'
 import { ConversationInput } from './ConversationInput'
-import { buildAgentCardData } from './useAgentCardData'
+import { orderHomeAgents } from './home-agent-card.helpers'
 
 function EmptyAgentsState({ onOpenAgents }: { onOpenAgents: () => void }) {
   return (
@@ -38,11 +45,13 @@ function EmptyAgentsState({ onOpenAgents }: { onOpenAgents: () => void }) {
 function RecentThreads({
   activeAgentId,
   agents,
+  adapters,
   onOpenAgents,
   onSelectAgent,
 }: {
   activeAgentId?: string | null
-  agents: AgentCardData[]
+  agents: HarnessAgent[]
+  adapters: HarnessAdapterDescriptor[]
   onOpenAgents: () => void
   onSelectAgent: (agentId: string) => void
 }) {
@@ -68,6 +77,7 @@ function RecentThreads({
       </div>
       <AgentCardDock
         agents={agents}
+        adapters={adapters}
         activeAgentId={activeAgentId ?? undefined}
         onSelectAgent={onSelectAgent}
         onCreateAgent={onOpenAgents}
@@ -79,25 +89,32 @@ function RecentThreads({
 export const AgentCommandHome: FC = () => {
   const navigate = useNavigate()
   const activeHint = useActiveHint()
-  const { agents, status } = useAgentCommandData()
+  // The conversation input still consumes the merged AgentEntry list
+  // from the layout context (handles legacy /claw/agents entries that
+  // haven't yet been backfilled into the harness store). The Recent
+  // Agents grid below reads the richer harness payload directly.
+  const { agents: legacyAgents, status } = useAgentCommandData()
+  const { harnessAgents } = useHarnessAgents()
+  const { adapters } = useAgentAdapters()
   const [selectedAgentId, setSelectedAgentId] = useState<string | null>(null)
-  const cardData = buildAgentCardData(agents, status?.status, undefined)
+
+  const orderedAgents = useMemo(
+    () => orderHomeAgents(harnessAgents),
+    [harnessAgents],
+  )
 
   useEffect(() => {
-    if (agents.length === 0) {
-      if (selectedAgentId) {
-        setSelectedAgentId(null)
-      }
+    if (legacyAgents.length === 0) {
+      if (selectedAgentId) setSelectedAgentId(null)
       return
     }
-
     if (
       !selectedAgentId ||
-      !agents.some((agent) => agent.agentId === selectedAgentId)
+      !legacyAgents.some((agent) => agent.agentId === selectedAgentId)
     ) {
-      setSelectedAgentId(agents[0].agentId)
+      setSelectedAgentId(legacyAgents[0].agentId)
     }
-  }, [agents, selectedAgentId])
+  }, [legacyAgents, selectedAgentId])
 
   const handleSend = (input: { text: string }) => {
     if (!selectedAgentId) return
@@ -110,7 +127,7 @@ export const AgentCommandHome: FC = () => {
     setSelectedAgentId(agent.agentId)
   }
 
-  const selectedAgent = agents.find(
+  const selectedAgent = legacyAgents.find(
     (agent) => agent.agentId === selectedAgentId,
   )
   const selectedAgentReady = selectedAgent
@@ -118,13 +135,15 @@ export const AgentCommandHome: FC = () => {
     : false
   const selectedAgentStatus =
     selectedAgent?.source === 'agent-harness' ? 'running' : status?.status
-  const selectedCard =
-    cardData.find((agent) => agent.agentId === selectedAgentId) ?? cardData[0]
+  const selectedAgentName =
+    selectedAgent?.name ?? orderedAgents[0]?.name ?? 'your agent'
+
+  const hasAgents = legacyAgents.length > 0
 
   return (
     <div className="min-h-full px-4 py-6">
       <div className="mx-auto flex w-full max-w-5xl flex-col gap-8">
-        {cardData.length > 0 ? (
+        {hasAgents ? (
           <>
             <div className="flex flex-col items-center gap-5 pt-[max(10vh,24px)] text-center">
               <div className="space-y-3">
@@ -140,7 +159,7 @@ export const AgentCommandHome: FC = () => {
               <div className="w-full max-w-3xl">
                 <ConversationInput
                   variant="home"
-                  agents={agents}
+                  agents={legacyAgents}
                   selectedAgentId={selectedAgentId}
                   onSelectAgent={handleSelectAgent}
                   onSend={handleSend}
@@ -151,7 +170,7 @@ export const AgentCommandHome: FC = () => {
                   attachmentsEnabled={false}
                   placeholder={
                     selectedAgentReady
-                      ? `Ask ${selectedCard?.name ?? 'your agent'} to handle a task...`
+                      ? `Ask ${selectedAgentName} to handle a task...`
                       : 'Agent runtime is not running...'
                   }
                 />
@@ -162,7 +181,8 @@ export const AgentCommandHome: FC = () => {
 
             <RecentThreads
               activeAgentId={selectedAgentId}
-              agents={cardData}
+              agents={orderedAgents}
+              adapters={adapters}
               onOpenAgents={() => navigate('/agents')}
               onSelectAgent={(agentId) => navigate(`/home/agents/${agentId}`)}
             />

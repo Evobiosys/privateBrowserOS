@@ -18,6 +18,8 @@ export interface AgentDefinition {
   sessionKey: string
   createdAt: number
   updatedAt: number
+  /** Pinned agents float to the top of the rail. Defaulted on read for legacy records. */
+  pinned?: boolean
 }
 
 export interface AgentAdapterDescriptor {

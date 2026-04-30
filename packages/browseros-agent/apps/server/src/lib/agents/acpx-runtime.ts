@@ -35,6 +35,7 @@ import type {
 import type {
   AgentHistoryPage,
   AgentPromptInput,
+  AgentRowSnapshot,
   AgentRuntime,
   AgentSession,
   AgentStatus,
@@ -133,6 +134,33 @@ export class AcpxRuntime implements AgentRuntime {
       return { agentId: input.agent.id, sessionId: input.sessionId, items: [] }
     }
     return mapAcpxSessionRecordToHistory(input.agent, input.sessionId, record)
+  }
+
+  /**
+   * Lightweight read of the session record's row-level fields. Returns
+   * `null` for never-used agents so the harness can fill in nulls
+   * without throwing. Token bucketing for `last7d` lives outside the
+   * session record (no per-message timestamps); a follow-up activity
+   * ledger will populate that field — for now we return zeros.
+   */
+  async getRowSnapshot(input: {
+    agent: AgentPromptInput['agent']
+    sessionId: 'main'
+  }): Promise<AgentRowSnapshot | null> {
+    const record = await this.sessionStore.load(input.agent.sessionKey)
+    if (!record) return null
+    return {
+      cwd: record.cwd ?? null,
+      lastUsedAt: parseRecordTimestamp(record) || null,
+      lastUserMessage: extractLastUserMessage(record),
+      tokens: {
+        cumulative: {
+          input: record.cumulative_token_usage?.input_tokens ?? 0,
+          output: record.cumulative_token_usage?.output_tokens ?? 0,
+        },
+        last7d: { input: 0, output: 0, requestCount: 0 },
+      },
+    }
   }
 
   async send(
@@ -571,6 +599,26 @@ function stringifyToolError(value: unknown): string {
   } catch {
     return 'Tool call failed'
   }
+}
+
+/**
+ * Walk messages newest-to-oldest and return the first user-role text.
+ * Returns null when the record has no user messages (rare — a session
+ * always starts with one — but possible mid-load).
+ */
+function extractLastUserMessage(record: AcpSessionRecord): string | null {
+  for (let i = record.messages.length - 1; i >= 0; i -= 1) {
+    const message = record.messages[i]
+    if (message === 'Resume') continue
+    if (!('User' in message)) continue
+    const text = message.User.content
+      .map((block) => userContentToText(block))
+      .filter(Boolean)
+      .join('\n\n')
+      .trim()
+    if (text) return text
+  }
+  return null
 }
 
 function parseRecordTimestamp(record: AcpSessionRecord): number {

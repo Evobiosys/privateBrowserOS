@@ -79,6 +79,28 @@ export interface AgentPromptInput {
   signal?: AbortSignal
 }
 
+/**
+ * Per-agent metadata sourced from the acpx session record. Surfaced
+ * by the listing endpoint to fill in command-center row info that the
+ * standard `getHistory` shape doesn't carry (cwd, token usage, last
+ * user message). Returned `null` when the agent has no record yet.
+ */
+export interface AgentRowSnapshot {
+  cwd: string | null
+  lastUsedAt: number | null
+  lastUserMessage: string | null
+  tokens: {
+    cumulative: { input: number; output: number }
+    /**
+     * 7-day rolling tokens. Zeroes today; populated in a follow-up that
+     * tracks per-turn deltas in an activity ledger (the session record
+     * doesn't carry per-message timestamps, so we can't bucket
+     * accurately from it alone).
+     */
+    last7d: { input: number; output: number; requestCount: number }
+  } | null
+}
+
 export interface AgentRuntime {
   status(agent: AgentDefinition): Promise<AgentStatus>
   listSessions(agent: AgentDefinition): Promise<AgentSession[]>
@@ -92,4 +114,13 @@ export interface AgentRuntime {
     sessionId: 'main'
     reason?: string
   }): Promise<void>
+  /**
+   * Optional. When present, the harness includes the snapshot fields
+   * in `listAgentsWithActivity` for the command-center rows. Test
+   * fakes can omit it; callers must tolerate `null`.
+   */
+  getRowSnapshot?(input: {
+    agent: AgentDefinition
+    sessionId: 'main'
+  }): Promise<AgentRowSnapshot | null>
 }

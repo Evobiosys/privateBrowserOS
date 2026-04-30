@@ -56,6 +56,29 @@ export interface HarnessAgent {
    * agents. Drives the recency sort and the "Last used X min ago" copy.
    */
   lastUsedAt?: number | null
+  /** Pinned agents float to the top of the list. Defaults to `false`. */
+  pinned?: boolean
+  /** First non-blank line of the most recent user message; null if none. */
+  lastUserMessage?: string | null
+  /** Working directory the agent runs in; null when no session record yet. */
+  cwd?: string | null
+  /** Cumulative + 7-day rolling token usage; null when no record. */
+  tokens?: {
+    last7d: { input: number; output: number; requestCount: number }
+    cumulative: { input: number; output: number }
+  } | null
+  turnsByDay?: number[]
+  failedByDay?: number[]
+  lastError?: string | null
+  lastErrorAt?: number | null
+  /** When non-null, an in-flight turn this row can be resumed from. */
+  activeTurnId?: string | null
+}
+
+export interface HarnessAdapterHealth {
+  healthy: boolean
+  reason?: string
+  checkedAt: number
 }
 
 export interface HarnessAdapterDescriptor {
@@ -66,6 +89,7 @@ export interface HarnessAdapterDescriptor {
   modelControl: 'runtime-supported' | 'best-effort'
   models: Array<{ id: string; label: string; recommended?: boolean }>
   reasoningEfforts: Array<{ id: string; label: string; recommended?: boolean }>
+  health?: HarnessAdapterHealth
 }
 
 export interface CreateHarnessAgentInput {

@@ -59,15 +59,3 @@ export interface AgentConversation {
   createdAt: number
   updatedAt: number
 }
-
-export interface AgentCardData {
-  agentId: string
-  name: string
-  model?: string
-  status: 'idle' | 'working' | 'error'
-  lastMessage?: string
-  lastMessageTimestamp?: number
-  activitySummary?: string
-  currentTool?: string
-  costUsd?: number
-}

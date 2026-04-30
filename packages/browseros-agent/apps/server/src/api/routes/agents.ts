@@ -19,6 +19,7 @@ import type {
   ActiveTurnInfo,
   TurnFrame,
 } from '../../lib/agents/active-turn-registry'
+import { AdapterHealthChecker } from '../../lib/agents/adapter-health'
 import {
   AGENT_ADAPTER_CATALOG,
   isAgentAdapter,
@@ -34,6 +35,7 @@ import {
   type AgentDefinitionWithActivity,
   AgentHarnessService,
   type GatewayStatusSnapshot,
+  InvalidAgentUpdateError,
   type OpenClawProvisioner,
   OpenClawProvisionerUnavailableError,
   TurnAlreadyActiveError,
@@ -60,6 +62,10 @@ type AgentRouteService = {
   }): Promise<AgentDefinition>
   getAgent(agentId: string): Promise<AgentDefinition | null>
   deleteAgent(agentId: string): Promise<boolean>
+  updateAgent(
+    agentId: string,
+    patch: { name?: string; pinned?: boolean },
+  ): Promise<AgentDefinition | null>
   getHistory(agentId: string): Promise<AgentHistoryPage>
   startTurn(input: {
     agentId: string
@@ -101,6 +107,8 @@ type AgentRouteDeps = {
    * gateway side. Without this, openclaw create requests fail with 503.
    */
   openclawProvisioner?: OpenClawProvisioner
+  /** Optional override; defaults to a fresh in-memory checker. */
+  adapterHealth?: AdapterHealthChecker
 }
 
 type SidepanelAgentChatRequest = {
@@ -122,9 +130,20 @@ export function createAgentRoutes(deps: AgentRouteDeps = {}) {
       openclawGatewayChat: deps.openclawGatewayChat,
       openclawProvisioner: deps.openclawProvisioner,
     })
+  // One checker per route mount. Cached probes refresh every 5min;
+  // tests can swap in an alternate via deps if needed.
+  const adapterHealth = deps.adapterHealth ?? new AdapterHealthChecker()
 
   return new Hono<Env>()
-    .get('/adapters', (c) => c.json({ adapters: AGENT_ADAPTER_CATALOG }))
+    .get('/adapters', async (c) => {
+      const adapters = await Promise.all(
+        AGENT_ADAPTER_CATALOG.map(async (descriptor) => ({
+          ...descriptor,
+          health: await adapterHealth.getHealth(descriptor.id),
+        })),
+      )
+      return c.json({ adapters })
+    })
     .get('/', async (c) => {
       // Single round-trip the agents page consumes: enriched agents
       // (status + lastUsedAt) plus the gateway lifecycle snapshot the
@@ -239,6 +258,20 @@ export function createAgentRoutes(deps: AgentRouteDeps = {}) {
         return c.json({
           success: await service.deleteAgent(c.req.param('agentId')),
         })
+      } catch (err) {
+        return handleAgentRouteError(c, err)
+      }
+    })
+    .patch('/:agentId', async (c) => {
+      const parsed = await parseAgentPatchBody(c)
+      if ('error' in parsed) return c.json({ error: parsed.error }, 400)
+      try {
+        const agent = await service.updateAgent(
+          c.req.param('agentId'),
+          parsed.patch,
+        )
+        if (!agent) return c.json({ error: 'Unknown agent' }, 404)
+        return c.json({ agent })
       } catch (err) {
         return handleAgentRouteError(c, err)
       }
@@ -670,9 +703,37 @@ function handleAgentRouteError(c: Context<Env>, err: unknown) {
   if (err instanceof UnknownAgentError) {
     return c.json({ error: err.message }, 404)
   }
+  if (err instanceof InvalidAgentUpdateError) {
+    return c.json({ error: err.message }, 400)
+  }
   if (err instanceof OpenClawProvisionerUnavailableError) {
     return c.json({ error: err.message }, 503)
   }
   const message = err instanceof Error ? err.message : String(err)
   return c.json({ error: message }, 500)
+}
+
+async function parseAgentPatchBody(
+  c: Context<Env>,
+): Promise<{ patch: { name?: string; pinned?: boolean } } | { error: string }> {
+  const body = await readJsonBody(c)
+  if ('error' in body) return body
+  const record = body.value
+  const patch: { name?: string; pinned?: boolean } = {}
+  if ('name' in record) {
+    if (typeof record.name !== 'string') {
+      return { error: 'Name must be a string' }
+    }
+    patch.name = record.name
+  }
+  if ('pinned' in record) {
+    if (typeof record.pinned !== 'boolean') {
+      return { error: 'Pinned must be a boolean' }
+    }
+    patch.pinned = record.pinned
+  }
+  if (Object.keys(patch).length === 0) {
+    return { error: 'No editable fields supplied' }
+  }
+  return { patch }
 }

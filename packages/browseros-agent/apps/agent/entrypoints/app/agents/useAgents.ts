@@ -135,6 +135,63 @@ export function useCreateHarnessAgent() {
   })
 }
 
+/**
+ * Apply a partial update to a harness agent. Used by the pin-toggle
+ * star and (eventually) the inline rename UI. Optimistically writes
+ * the patch into the listing query cache so the row updates instantly,
+ * then rolls back if the server rejects the change.
+ */
+export function useUpdateHarnessAgent() {
+  const { baseUrl, isLoading: urlLoading } = useAgentServerUrl()
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (input: {
+      agentId: string
+      patch: { name?: string; pinned?: boolean }
+    }) => {
+      if (!baseUrl || urlLoading) {
+        throw new Error('BrowserOS agent server URL is not ready')
+      }
+      const data = await agentsFetch<{ agent: HarnessAgent }>(
+        baseUrl,
+        `/${encodeURIComponent(input.agentId)}`,
+        {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(input.patch),
+        },
+      )
+      return data.agent
+    },
+    onMutate: async ({ agentId, patch }) => {
+      const queryKey = [AGENT_QUERY_KEYS.agents, baseUrl]
+      await queryClient.cancelQueries({ queryKey })
+      const previous = queryClient.getQueryData<HarnessAgentsResponse>(queryKey)
+      if (!previous) return { previous: undefined }
+      queryClient.setQueryData<HarnessAgentsResponse>(queryKey, {
+        ...previous,
+        agents: previous.agents.map((agent) =>
+          agent.id === agentId ? { ...agent, ...patch } : agent,
+        ),
+      })
+      return { previous }
+    },
+    onError: (_err, _vars, context) => {
+      if (!context?.previous) return
+      queryClient.setQueryData(
+        [AGENT_QUERY_KEYS.agents, baseUrl],
+        context.previous,
+      )
+    },
+    onSettled: async () => {
+      await queryClient.invalidateQueries({
+        queryKey: [AGENT_QUERY_KEYS.agents],
+      })
+    },
+  })
+}
+
 export function useDeleteHarnessAgent() {
   const { baseUrl, isLoading: urlLoading } = useAgentServerUrl()
   const queryClient = useQueryClient()

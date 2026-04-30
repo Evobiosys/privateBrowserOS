@@ -2,67 +2,87 @@ import { Loader2 } from 'lucide-react'
 import { type FC, useMemo } from 'react'
 import { AgentRowCard } from './AgentRowCard'
 import { AgentsEmptyState } from './AgentsEmptyState'
-import type { HarnessAgent, HarnessAgentAdapter } from './agent-harness-types'
+import type {
+  HarnessAdapterDescriptor,
+  HarnessAgent,
+  HarnessAgentAdapter,
+} from './agent-harness-types'
+import type {
+  AgentAdapterHealth,
+  AgentRowData,
+} from './agent-row/agent-row.types'
 import type { AgentListItem } from './agents-page-types'
 import type { AgentLiveness } from './LivenessDot'
 
 interface AgentListProps {
   agents: AgentListItem[]
-  /**
-   * Optional per-agent activity metadata. Keyed by `agentId`. Missing
-   * entries fall back to status='unknown' / lastUsedAt=null and the
-   * row renders an "unknown" dot. The server will populate this once
-   * the activity tracker ships; the page works without it.
-   */
+  /** Optional per-agent activity metadata, keyed by `agentId`. */
   activity?: Record<
     string,
     { status: AgentLiveness; lastUsedAt: number | null }
   >
-  /**
-   * Lookup table from harness agent id → adapter + reasoning effort,
-   * sourced from `useHarnessAgents`. Lets the row card render the
-   * correct adapter icon and chips for harness agents (legacy
-   * /claw/agents entries fall back to inferring from `runtimeLabel`).
-   */
+  /** Lookup table from harness id → enriched agent record. */
   harnessAgentLookup?: Map<string, HarnessAgent>
+  /** Adapter catalog (carries per-adapter health). */
+  adapters: HarnessAdapterDescriptor[]
   loading: boolean
   deletingAgentKey: string | null
   onCreateAgent: () => void
   onDeleteAgent: (agent: AgentListItem) => void
+  onPinToggle: (agent: AgentListItem, next: boolean) => void
 }
 
 export const AgentList: FC<AgentListProps> = ({
   agents,
   activity,
   harnessAgentLookup,
+  adapters,
   loading,
   deletingAgentKey,
   onCreateAgent,
   onDeleteAgent,
+  onPinToggle,
 }) => {
-  // Sort by recency: most recently used first; never-used agents drop
-  // to the bottom in id-stable order so the list doesn't reshuffle on
-  // every refresh. The pinned exception is the gateway's `main` agent
-  // when it's never been touched — keep it at the top so a fresh
-  // install has an obvious starting point.
+  const adapterHealth = useMemo(() => {
+    const map = new Map<HarnessAgentAdapter, AgentAdapterHealth>()
+    for (const adapter of adapters) {
+      if (adapter.health) {
+        map.set(adapter.id, {
+          healthy: adapter.health.healthy,
+          reason: adapter.health.reason,
+        })
+      }
+    }
+    return map
+  }, [adapters])
+
+  // Sort: pinned rows first, then most recently used, then never-used
+  // agents in id-stable order. The gateway's `main` agent stays
+  // pinned-to-top when never touched so a fresh install has an
+  // obvious starting point.
   const ordered = useMemo(() => {
-    const withScore = agents.map((agent) => {
-      const lastUsedAt = activity?.[agent.agentId]?.lastUsedAt ?? null
-      return { agent, lastUsedAt }
+    const withMeta = agents.map((agent) => {
+      const harness = harnessAgentLookup?.get(agent.agentId)
+      return {
+        agent,
+        pinned: harness?.pinned ?? false,
+        lastUsedAt: activity?.[agent.agentId]?.lastUsedAt ?? null,
+      }
     })
-    return withScore
+    return withMeta
       .sort((a, b) => {
-        const aPinned = a.agent.agentId === 'main' && a.lastUsedAt === null
-        const bPinned = b.agent.agentId === 'main' && b.lastUsedAt === null
-        if (aPinned && !bPinned) return -1
-        if (!aPinned && bPinned) return 1
+        if (a.pinned !== b.pinned) return a.pinned ? -1 : 1
+        const aSeed = a.agent.agentId === 'main' && a.lastUsedAt === null
+        const bSeed = b.agent.agentId === 'main' && b.lastUsedAt === null
+        if (aSeed && !bSeed) return -1
+        if (!aSeed && bSeed) return 1
         const aValue = a.lastUsedAt ?? -Infinity
         const bValue = b.lastUsedAt ?? -Infinity
         if (aValue !== bValue) return bValue - aValue
         return a.agent.agentId.localeCompare(b.agent.agentId)
       })
       .map((entry) => entry.agent)
-  }, [activity, agents])
+  }, [activity, agents, harnessAgentLookup])
 
   if (loading && agents.length === 0) {
     return (
@@ -80,18 +100,23 @@ export const AgentList: FC<AgentListProps> = ({
     <div className="grid gap-3">
       {ordered.map((agent) => {
         const harness = harnessAgentLookup?.get(agent.agentId)
-        const adapter: HarnessAgentAdapter | undefined =
+        const adapter: HarnessAgentAdapter | 'unknown' =
           harness?.adapter ?? inferAdapterFromLabel(agent.runtimeLabel)
+        const data = buildRowData({
+          agent,
+          adapter,
+          harness,
+          activity: activity?.[agent.agentId],
+          adapterHealth:
+            adapterHealth.get(adapter as HarnessAgentAdapter) ?? null,
+        })
         return (
           <AgentRowCard
             key={agent.key}
-            agent={agent}
-            status={activity?.[agent.agentId]?.status}
-            lastUsedAt={activity?.[agent.agentId]?.lastUsedAt}
-            adapter={adapter}
-            reasoningEffort={harness?.reasoningEffort ?? null}
-            onDelete={onDeleteAgent}
+            data={data}
             deleting={deletingAgentKey === agent.key}
+            onDelete={onDeleteAgent}
+            onPinToggle={onPinToggle}
           />
         )
       })}
@@ -99,10 +124,53 @@ export const AgentList: FC<AgentListProps> = ({
   )
 }
 
-function inferAdapterFromLabel(label: string): HarnessAgentAdapter | undefined {
+function inferAdapterFromLabel(label: string): HarnessAgentAdapter | 'unknown' {
   const lower = label?.toLowerCase()
   if (lower === 'claude code') return 'claude'
   if (lower === 'codex') return 'codex'
   if (lower === 'openclaw') return 'openclaw'
-  return undefined
+  return 'unknown'
+}
+
+const ZERO_BUCKETS = (): number[] => Array.from({ length: 14 }, () => 0)
+
+function buildRowData(input: {
+  agent: AgentListItem
+  adapter: HarnessAgentAdapter | 'unknown'
+  harness: HarnessAgent | undefined
+  activity: { status: AgentLiveness; lastUsedAt: number | null } | undefined
+  adapterHealth: AgentAdapterHealth | null
+}): AgentRowData {
+  const { agent, adapter, harness, activity, adapterHealth } = input
+  return {
+    agent,
+    adapter,
+    modelLabel: deriveModelLabel(agent, harness),
+    reasoningEffort: harness?.reasoningEffort ?? null,
+    status: activity?.status ?? 'unknown',
+    lastUsedAt: activity?.lastUsedAt ?? harness?.lastUsedAt ?? null,
+    pinned: harness?.pinned ?? false,
+    cwd: harness?.cwd ?? null,
+    lastUserMessage: harness?.lastUserMessage ?? null,
+    tokens: harness?.tokens ?? null,
+    turnsByDay: harness?.turnsByDay ?? ZERO_BUCKETS(),
+    failedByDay: harness?.failedByDay ?? ZERO_BUCKETS(),
+    lastError: harness?.lastError ?? null,
+    lastErrorAt: harness?.lastErrorAt ?? null,
+    activeTurnId: harness?.activeTurnId ?? null,
+    adapterHealth,
+  }
+}
+
+function deriveModelLabel(
+  agent: AgentListItem,
+  harness: HarnessAgent | undefined,
+): string | null {
+  // Prefer the agent rail's modelLabel when meaningful; harness's
+  // modelId is a stable identifier but the rail's `modelLabel`
+  // already maps to a friendly display string.
+  if (agent.modelLabel && agent.modelLabel !== 'default') {
+    return agent.modelLabel
+  }
+  return harness?.modelId ?? null
 }

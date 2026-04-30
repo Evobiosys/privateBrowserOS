@@ -1,4 +1,5 @@
 import type { AgentListItem } from './agents-page-types'
+import type { AgentLiveness } from './LivenessDot'
 
 /**
  * Display rules for the redesigned agent rows. Pure helpers — no React,
@@ -81,4 +82,26 @@ export function formatRelativeTime(epochMs: number | null): string {
   }
   const d = Math.floor(diff / ONE_DAY)
   return d === 1 ? '1 day ago' : `${d} days ago`
+}
+
+/**
+ * Tooltip-friendly description of a row's current liveness state.
+ * Returns `undefined` when the state has nothing extra to add (e.g.
+ * `unknown` with no timestamp).
+ */
+export function livenessDetail(
+  status: AgentLiveness,
+  lastUsedAt: number | null | undefined,
+): string | undefined {
+  if (lastUsedAt == null) return undefined
+  const diffMin = Math.floor((Date.now() - lastUsedAt) / 60_000)
+  if (status === 'idle') return `Idle for ${Math.max(0, diffMin)} min`
+  if (status === 'asleep') {
+    if (diffMin < 60) return `Asleep — quiet for ${diffMin} min`
+    const hr = Math.floor(diffMin / 60)
+    return `Asleep — quiet for ${hr} hr`
+  }
+  if (status === 'working') return 'Working on a turn'
+  if (status === 'error') return 'Attention — last turn failed'
+  return undefined
 }

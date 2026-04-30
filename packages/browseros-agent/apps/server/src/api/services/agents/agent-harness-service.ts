@@ -20,6 +20,7 @@ import {
 } from '../../../lib/agents/file-agent-store'
 import type {
   AgentHistoryPage,
+  AgentRowSnapshot,
   AgentRuntime,
   AgentStreamEvent,
 } from '../../../lib/agents/types'
@@ -37,7 +38,29 @@ export interface AgentActivity {
 export interface AgentDefinitionWithActivity extends AgentDefinition {
   status: AgentLiveness
   lastUsedAt: number | null
+  /** First non-blank line of the most recent user message; null if none. */
+  lastUserMessage: string | null
+  /** Working directory the agent runs in; null when no session record yet. */
+  cwd: string | null
+  /** Cumulative + 7-day rolling token usage; null when no record. */
+  tokens: AgentRowSnapshot['tokens']
+  /**
+   * Last 14 days of completed turns, oldest → newest. Zero-filled in
+   * this release until the activity ledger ships in a follow-up.
+   */
+  turnsByDay: number[]
+  /** Same shape as `turnsByDay`; counts of failed turns. */
+  failedByDay: number[]
+  /** Last error message when status === 'error'; null otherwise. */
+  lastError: string | null
+  lastErrorAt: number | null
+  /** When non-null, an in-flight turn this row can be resumed from. */
+  activeTurnId: string | null
 }
+
+const SPARKLINE_DAYS = 14
+const ZERO_BUCKETS = (): number[] =>
+  Array.from({ length: SPARKLINE_DAYS }, () => 0)
 
 /**
  * `idle` downgrades to `asleep` after this many ms of no activity. Read at
@@ -166,15 +189,27 @@ export class AgentHarnessService {
    */
   async listAgentsWithActivity(): Promise<AgentDefinitionWithActivity[]> {
     const agents = await this.listAgents()
-    const lastUsedMap = await this.collectLastUsed(agents)
+    const snapshots = await this.collectRowSnapshots(agents)
     const now = Date.now()
     return agents.map((agent) => {
       const live = this.activity.get(agent.id)
-      const lastUsedAt = lastUsedMap.get(agent.id) ?? null
+      const snapshot = snapshots.get(agent.id) ?? null
+      const lastUsedAt = snapshot?.lastUsedAt ?? null
+      const activeTurn = this.turnRegistry.getActiveFor(agent.id, 'main')
       return {
         ...agent,
+        pinned: agent.pinned ?? false,
         status: deriveStatus(live, lastUsedAt, now),
         lastUsedAt,
+        lastUserMessage: snapshot?.lastUserMessage ?? null,
+        cwd: snapshot?.cwd ?? null,
+        tokens: snapshot?.tokens ?? null,
+        turnsByDay: ZERO_BUCKETS(),
+        failedByDay: ZERO_BUCKETS(),
+        lastError: live?.status === 'error' ? (live.lastError ?? null) : null,
+        lastErrorAt:
+          live?.status === 'error' ? (live.lastEventAt ?? null) : null,
+        activeTurnId: activeTurn?.turnId ?? null,
       }
     })
   }
@@ -199,33 +234,44 @@ export class AgentHarnessService {
   }
 
   /**
-   * Read each agent's `lastUsedAt` from the acpx session record (the
-   * runtime exposes it through `getHistory` indirectly, but we don't
-   * need history items here — only the timestamp). Loads in parallel
-   * and tolerates per-agent failures (agents that have never had a
-   * turn won't have a record yet).
+   * Pull one snapshot per agent in parallel. Falls back to a
+   * lastUsedAt-only snapshot when the runtime doesn't implement
+   * `getRowSnapshot` (test fakes, future runtimes), so the listing
+   * stays robust during migration.
    */
-  private async collectLastUsed(
+  private async collectRowSnapshots(
     agents: AgentDefinition[],
-  ): Promise<Map<string, number>> {
-    const out = new Map<string, number>()
+  ): Promise<Map<string, AgentRowSnapshot>> {
+    const out = new Map<string, AgentRowSnapshot>()
     await Promise.all(
       agents.map(async (agent) => {
         try {
-          const page = await this.runtime.getHistory({
-            agent,
-            sessionId: 'main',
-          })
-          const last = page.items.at(-1)?.createdAt
-          if (typeof last === 'number' && Number.isFinite(last)) {
-            out.set(agent.id, last)
-          }
+          const snapshot = await this.fetchRowSnapshot(agent)
+          if (snapshot) out.set(agent.id, snapshot)
         } catch {
           // No record yet — treat as never-used.
         }
       }),
     )
     return out
+  }
+
+  private async fetchRowSnapshot(
+    agent: AgentDefinition,
+  ): Promise<AgentRowSnapshot | null> {
+    if (typeof this.runtime.getRowSnapshot === 'function') {
+      return this.runtime.getRowSnapshot({ agent, sessionId: 'main' })
+    }
+    // Legacy fallback: derive only `lastUsedAt` from the history page.
+    const page = await this.runtime.getHistory({ agent, sessionId: 'main' })
+    const last = page.items.at(-1)?.createdAt
+    if (typeof last !== 'number' || !Number.isFinite(last)) return null
+    return {
+      cwd: null,
+      lastUsedAt: last,
+      lastUserMessage: null,
+      tokens: null,
+    }
   }
 
   /** Mark `agentId` as actively running a turn. */
@@ -386,6 +432,35 @@ export class AgentHarnessService {
     }
 
     return this.agentStore.delete(agentId)
+  }
+
+  /**
+   * Apply a partial update to an agent record. Currently used by the
+   * pin-toggle mutation; rename will land here too. Returns null if
+   * the agent doesn't exist; throws on validation failure so the
+   * route layer can surface a 400.
+   */
+  async updateAgent(
+    agentId: string,
+    patch: { name?: string; pinned?: boolean },
+  ): Promise<AgentDefinition | null> {
+    if (patch.name !== undefined) {
+      const trimmed = patch.name.trim()
+      if (!trimmed) {
+        throw new InvalidAgentUpdateError('Name is required')
+      }
+      // Mirror the create-time validation for length consistency.
+      const { AGENT_HARNESS_LIMITS } = await import(
+        '@browseros/shared/constants/limits'
+      )
+      if (trimmed.length > AGENT_HARNESS_LIMITS.AGENT_NAME_MAX_CHARS) {
+        throw new InvalidAgentUpdateError(
+          `Name must be ${AGENT_HARNESS_LIMITS.AGENT_NAME_MAX_CHARS} characters or fewer`,
+        )
+      }
+      patch = { ...patch, name: trimmed }
+    }
+    return this.agentStore.update(agentId, patch)
   }
 
   getAgent(agentId: string): Promise<AgentDefinition | null> {
@@ -625,6 +700,17 @@ export class OpenClawProvisionerUnavailableError extends Error {
   constructor() {
     super('OpenClaw gateway provisioner is not wired into AgentHarnessService')
     this.name = 'OpenClawProvisionerUnavailableError'
+  }
+}
+
+/**
+ * Thrown when an `updateAgent` call carries a payload that fails
+ * validation (e.g., empty/oversized name). Route layer maps to 400.
+ */
+export class InvalidAgentUpdateError extends Error {
+  constructor(message: string) {
+    super(message)
+    this.name = 'InvalidAgentUpdateError'
   }
 }
 

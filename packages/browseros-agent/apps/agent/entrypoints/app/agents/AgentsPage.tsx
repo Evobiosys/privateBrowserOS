@@ -44,6 +44,7 @@ import {
   useCreateHarnessAgent,
   useDeleteHarnessAgent,
   useHarnessAgents,
+  useUpdateHarnessAgent,
 } from './useAgents'
 import { useOpenClawAgents, useOpenClawMutations } from './useOpenClaw'
 
@@ -76,6 +77,7 @@ export const AgentsPage: FC = () => {
   } = useOpenClawAgents(openClawAgentsEnabled)
   const createHarnessAgent = useCreateHarnessAgent()
   const deleteHarnessAgent = useDeleteHarnessAgent()
+  const updateHarnessAgent = useUpdateHarnessAgent()
   const {
     setupOpenClaw,
     createAgent: createOpenClawAgent,
@@ -342,11 +344,23 @@ export const AgentsPage: FC = () => {
           agents={agentListItems}
           activity={agentActivity}
           harnessAgentLookup={harnessAgentLookup}
+          adapters={adapters}
           loading={agentsLoading}
           deletingAgentKey={deletingAgent ? deletingAgentKey : null}
           onCreateAgent={() => setCreateOpen(true)}
           onDeleteAgent={(agent) => {
             void handleDelete(agent)
+          }}
+          onPinToggle={(agent, next) => {
+            // Optimistic mutation; harness-only — gateway-original
+            // OpenClaw entries are gated server-side via the harness
+            // backfill, so we only fire when the row maps to a
+            // harness agent record.
+            if (!harnessAgentLookup.has(agent.agentId)) return
+            updateHarnessAgent.mutate({
+              agentId: agent.agentId,
+              patch: { pinned: next },
+            })
           }}
         />
 

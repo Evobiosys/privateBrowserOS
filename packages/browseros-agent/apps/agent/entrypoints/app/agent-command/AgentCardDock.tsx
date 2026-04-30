@@ -1,70 +1,71 @@
 import { Plus } from 'lucide-react'
 import type { FC } from 'react'
-import type { AgentCardData } from '@/lib/agent-conversations/types'
+import type {
+  HarnessAdapterDescriptor,
+  HarnessAdapterHealth,
+  HarnessAgent,
+  HarnessAgentAdapter,
+} from '@/entrypoints/app/agents/agent-harness-types'
 import { cn } from '@/lib/utils'
-import { AgentCardCompact, AgentCardExpanded } from './AgentCard'
+import { HomeAgentCard } from './HomeAgentCard'
 
 interface AgentCardDockProps {
-  agents: AgentCardData[]
+  agents: HarnessAgent[]
+  adapters: HarnessAdapterDescriptor[]
   activeAgentId?: string
   onSelectAgent: (agentId: string) => void
   onCreateAgent?: () => void
-  compact?: boolean
 }
 
-function CreateAgentButton({
-  compact,
-  onCreateAgent,
-}: {
-  compact?: boolean
-  onCreateAgent: () => void
-}) {
+function CreateAgentButton({ onCreateAgent }: { onCreateAgent: () => void }) {
   return (
     <button
       type="button"
       onClick={onCreateAgent}
       className={cn(
-        'flex shrink-0 items-center justify-center gap-2 border border-dashed text-muted-foreground transition-colors hover:border-[var(--accent-orange)] hover:text-[var(--accent-orange)]',
-        compact
-          ? 'rounded-full px-3 py-2 text-sm'
-          : 'min-h-32 rounded-2xl px-5 py-4',
+        'flex min-h-32 shrink-0 items-center justify-center gap-2 rounded-2xl border border-dashed px-5 py-4 text-muted-foreground transition-colors',
+        'hover:border-[var(--accent-orange)] hover:text-[var(--accent-orange)]',
       )}
     >
-      <Plus className={compact ? 'size-3.5' : 'size-5'} />
-      <span>{compact ? 'New' : 'Create agent'}</span>
+      <Plus className="size-5" />
+      <span>Create agent</span>
     </button>
   )
 }
 
+/**
+ * 3-column grid of HomeAgentCards plus a trailing "Create agent"
+ * tile. The previous `compact` mode (rendered a horizontal pill rail)
+ * had no callers and was dropped along with the legacy AgentCard.
+ */
 export const AgentCardDock: FC<AgentCardDockProps> = ({
   agents,
+  adapters,
   activeAgentId,
   onSelectAgent,
   onCreateAgent,
-  compact,
 }) => {
   if (agents.length === 0 && !onCreateAgent) return null
 
-  const Card = compact ? AgentCardCompact : AgentCardExpanded
+  const adapterHealth = new Map<HarnessAgentAdapter, HarnessAdapterHealth>()
+  for (const descriptor of adapters) {
+    if (descriptor.health) adapterHealth.set(descriptor.id, descriptor.health)
+  }
 
   return (
-    <div
-      className={cn(
-        compact
-          ? 'flex items-center gap-2 overflow-x-auto pb-1'
-          : 'grid gap-4 md:grid-cols-3',
-      )}
-    >
+    <div className="grid gap-4 md:grid-cols-3">
       {agents.map((agent) => (
-        <Card
-          key={agent.agentId}
+        <HomeAgentCard
+          key={agent.id}
           agent={agent}
-          active={agent.agentId === activeAgentId}
-          onClick={() => onSelectAgent(agent.agentId)}
+          adapter={agent.adapter}
+          adapterHealth={adapterHealth.get(agent.adapter) ?? null}
+          active={agent.id === activeAgentId}
+          onClick={() => onSelectAgent(agent.id)}
         />
       ))}
       {onCreateAgent ? (
-        <CreateAgentButton compact={compact} onCreateAgent={onCreateAgent} />
+        <CreateAgentButton onCreateAgent={onCreateAgent} />
       ) : null}
     </div>
   )

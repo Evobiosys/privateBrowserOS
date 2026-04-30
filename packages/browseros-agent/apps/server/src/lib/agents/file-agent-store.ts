@@ -148,6 +148,42 @@ export class FileAgentStore {
     })
   }
 
+  /**
+   * Apply a partial update to an agent record. Returns the updated
+   * record, or `null` if no agent matches `id`. Atomic via the same
+   * temp-file + rename + write-queue rules as `create`. Bumps
+   * `updatedAt` so the rail's recency sort reflects the change.
+   *
+   * Currently consumed by the pin-toggle mutation; the rename UI will
+   * use the same patch surface.
+   */
+  async update(
+    id: string,
+    patch: Partial<Pick<AgentDefinition, 'name' | 'pinned'>>,
+  ): Promise<AgentDefinition | null> {
+    return this.withWriteLock(async () => {
+      const file = await this.read()
+      const index = file.agents.findIndex((agent) => agent.id === id)
+      if (index < 0) return null
+      const current = file.agents[index]
+      const next: AgentDefinition = {
+        ...current,
+        ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+        ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+        updatedAt: Date.now(),
+      }
+      const agents = [...file.agents]
+      agents[index] = next
+      await this.write({ ...file, agents })
+      logger.info('Agent harness store updated agent', {
+        agentId: id,
+        patchedFields: Object.keys(patch),
+        filePath: this.filePath,
+      })
+      return next
+    })
+  }
+
   async delete(id: string): Promise<boolean> {
     return this.withWriteLock(async () => {
       const file = await this.read()

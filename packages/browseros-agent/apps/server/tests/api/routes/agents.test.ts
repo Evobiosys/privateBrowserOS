@@ -452,6 +452,55 @@ describe('createAgentRoutes', () => {
     expect(response.status).toBe(404)
   })
 
+  it('PATCH /:agentId updates pinned + name and rejects empty patches', async () => {
+    const agent: AgentDefinition = {
+      id: 'agent-1',
+      name: 'Review bot',
+      adapter: 'codex',
+      modelId: 'gpt-5.5',
+      reasoningEffort: 'medium',
+      permissionMode: 'approve-all',
+      sessionKey: 'agent:agent-1:main',
+      createdAt: 1000,
+      updatedAt: 1000,
+    }
+    const route = createMountedRoutes([agent])
+
+    const pinned = await route.request('/agents/agent-1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: true }),
+    })
+    expect(pinned.status).toBe(200)
+    expect(await pinned.json()).toMatchObject({
+      agent: { id: 'agent-1', pinned: true },
+    })
+
+    const renamed = await route.request('/agents/agent-1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name: 'Renamed' }),
+    })
+    expect(renamed.status).toBe(200)
+    expect(await renamed.json()).toMatchObject({
+      agent: { id: 'agent-1', name: 'Renamed' },
+    })
+
+    const empty = await route.request('/agents/agent-1', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({}),
+    })
+    expect(empty.status).toBe(400)
+
+    const unknown = await route.request('/agents/missing', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ pinned: false }),
+    })
+    expect(unknown.status).toBe(404)
+  })
+
   it('rejects overlong agent names', async () => {
     const route = createMountedRoutes([])
     const response = await route.request('/agents', {
@@ -550,6 +599,21 @@ function createFakeService(agents: AgentDefinition[]) {
       agents.splice(index, 1)
       return true
     },
+    async updateAgent(
+      agentId: string,
+      patch: { name?: string; pinned?: boolean },
+    ) {
+      const index = agents.findIndex((agent) => agent.id === agentId)
+      if (index < 0) return null
+      const next = {
+        ...agents[index],
+        ...(patch.name !== undefined ? { name: patch.name.trim() } : {}),
+        ...(patch.pinned !== undefined ? { pinned: patch.pinned } : {}),
+        updatedAt: Date.now(),
+      }
+      agents[index] = next
+      return next
+    },
     async getHistory(agentId: string) {
       return {
         agentId,
@@ -645,6 +709,9 @@ function createBlockingFakeService(agents: AgentDefinition[]) {
     },
     async deleteAgent() {
       return false
+    },
+    async updateAgent() {
+      return null
     },
     async getHistory(agentId: string) {
       return { agentId, sessionId: 'main' as const, items: [] }
