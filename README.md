@@ -1,3 +1,9 @@
+EDITS FOR THIS FORK:
+A privacy-respecting fork of BrowserOS, tho open-source agentic browser
+early beta and not yet maintained (I intend to maintain it mid-term using evobiosys.org/forkaway)
+
+
+
 <div align="center">
 <img width="693" height="379" alt="github-banner" src="https://github.com/user-attachments/assets/1e37941c-4dbc-4662-9c8c-3bbe9971301d" />
 
