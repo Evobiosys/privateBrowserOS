@@ -26,11 +26,17 @@ class MetricsService {
   initialize(config: MetricsConfig): void {
     this.config = { ...this.config, ...config }
 
-    if (!this.client && POSTHOG_API_KEY) {
-      this.client = new PostHog(POSTHOG_API_KEY, {
-        host: EXTERNAL_URLS.POSTHOG_DEFAULT,
-      })
-    }
+    // privacy fork: server-side PostHog client construction disabled.
+    // `client` stays null → log()/capture() early-return → isEnabled()=false
+    // (main.ts logs "Metrics disabled: missing POSTHOG_API_KEY" on boot).
+    // if (!this.client && POSTHOG_API_KEY) {
+    //   this.client = new PostHog(POSTHOG_API_KEY, {
+    //     host: EXTERNAL_URLS.POSTHOG_DEFAULT,
+    //   })
+    // }
+    void POSTHOG_API_KEY
+    void EXTERNAL_URLS
+    void PostHog
   }
 
   isEnabled(): boolean {

@@ -104,14 +104,18 @@ export async function loadProviders(): Promise<LlmProviderConfig[]> {
 /** Creates the default BrowserOS provider configuration */
 export function createDefaultBrowserOSProvider(): LlmProviderConfig {
   const timestamp = Date.now()
+  // privacy fork: built-in default points at local Ollama instead of the
+  // hosted BrowserOS endpoint. Id/name kept so downstream "is this the
+  // built-in row?" checks (which key off DEFAULT_PROVIDER_ID) still work.
+  // To use: run `ollama pull llama3.2` (or any model) and `ollama serve`.
   return {
     id: DEFAULT_PROVIDER_ID,
-    type: 'browseros',
+    type: 'ollama',
     name: DEFAULT_PROVIDER_NAME,
-    baseUrl: 'https://api.browseros.com/v1',
-    modelId: 'browseros-auto',
-    supportsImages: true,
-    contextWindow: 200000,
+    baseUrl: 'http://localhost:11434/v1',
+    modelId: 'llama3.2',
+    supportsImages: false,
+    contextWindow: 128000,
     temperature: 0.2,
     createdAt: timestamp,
     updatedAt: timestamp,
