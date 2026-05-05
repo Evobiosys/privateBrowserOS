@@ -2,6 +2,8 @@ EDITS FOR THIS FORK:
 A privacy-respecting fork of BrowserOS, tho open-source agentic browser
 early beta and not yet maintained (I intend to maintain it mid-term using evobiosys.org/forkaway)
 
+Tier 1 is approved removal of telemetry
+Tier 2 has additional security hardening that I haven't yet reviewed
 
 
 <div align="center">
