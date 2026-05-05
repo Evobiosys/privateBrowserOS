@@ -1,5 +1,6 @@
 import type { ToolSet } from 'ai'
-import { createBashTool } from './bash'
+// privacy fork: filesystem_bash removed — RCE via prompt injection.
+// import { createBashTool } from './bash'
 import { createEditTool } from './edit'
 import { createFindTool } from './find'
 import { createGrepTool } from './grep'
@@ -12,7 +13,7 @@ export function buildFilesystemToolSet(cwd: string): ToolSet {
     filesystem_read: createReadTool(cwd),
     filesystem_write: createWriteTool(cwd),
     filesystem_edit: createEditTool(cwd),
-    filesystem_bash: createBashTool(cwd),
+    // filesystem_bash: createBashTool(cwd),  // privacy fork: removed
     filesystem_grep: createGrepTool(cwd),
     filesystem_find: createFindTool(cwd),
     filesystem_ls: createLsTool(cwd),

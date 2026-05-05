@@ -17,7 +17,8 @@ function getExtensionPage(): string {
   }
 }
 
-if (env.VITE_PUBLIC_SENTRY_DSN) {
+// privacy fork: hard-disabled (was gated only on env var).
+if (false && env.VITE_PUBLIC_SENTRY_DSN) {
   Sentry.init({
     dsn: env.VITE_PUBLIC_SENTRY_DSN,
     // Setting this option to true will send default PII data to Sentry.
